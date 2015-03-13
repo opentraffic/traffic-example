@@ -8,6 +8,7 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map.Entry;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -15,6 +16,8 @@ import org.apache.commons.csv.CSVRecord;
 
 import com.conveyal.osmlib.OSM;
 import com.conveyal.trafficengine.GPSPoint;
+import com.conveyal.trafficengine.SampleBucket;
+import com.conveyal.trafficengine.SampleBucketKey;
 import com.conveyal.trafficengine.SpeedSample;
 import com.conveyal.trafficengine.SpeedSampleListener;
 import com.conveyal.trafficengine.TrafficEngine;
@@ -61,11 +64,18 @@ public class App
 			}
 			te.update(gpsPoint);
 		}
+		
+		for( Entry<SampleBucketKey, SampleBucket> entry : te.statsSet() ){
+			SampleBucketKey kk = entry.getKey();
+			SampleBucket vv = entry.getValue();
+			
+			System.out.println( String.format("%d,%d,%d,%d,%d,%f", kk.wayId, kk.startNodeIndex, kk.endNodeIndex, kk.hourOfWeek, vv.count, vv.mean) );
+		}
     }
     
 	private static List<GPSPoint> loadGPSPointsFromCSV(String string) throws IOException, ParseException {
 		List<GPSPoint> ret = new ArrayList<GPSPoint>();
-
+		
 		File csvData = new File(string);
 		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
 

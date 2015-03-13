@@ -5,3 +5,7 @@ An example application of traffic-engine.
 
 * [osm-lib](https://github.com/conveyal/osm-lib)
 * [traffic-engine](https://github.com/maptrace/traffic-engine)
+
+# build
+
+    $ mvn clean compile assembly:single
