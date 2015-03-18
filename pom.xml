@@ -33,6 +33,12 @@
       </plugin>
     </plugins>
   </build>
+  <repositories>
+    <repository>
+      <id>geotools</id>
+      <url>http://download.osgeo.org/webdav/geotools/</url>
+    </repository>
+  </repositories>
   <dependencies>
     <dependency>
       <groupId>junit</groupId>
@@ -49,6 +55,11 @@
       <groupId>com.conveyal</groupId>
       <artifactId>osm-lib</artifactId>
       <version>0.1-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+    	<groupId>org.geotools</groupId>
+    	<artifactId>gt-epsg-hsql</artifactId>
+    	<version>12.2</version>
     </dependency>
   </dependencies>
 </project>
