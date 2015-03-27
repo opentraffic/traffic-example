@@ -1,11 +1,13 @@
 package com.conveyal;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.charset.Charset;
 import java.text.DateFormat;
 import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -27,53 +29,96 @@ import com.conveyal.trafficengine.SpeedSample;
 import com.conveyal.trafficengine.SpeedSampleListener;
 import com.conveyal.trafficengine.StreetSegment;
 import com.conveyal.trafficengine.TrafficEngine;
+import com.conveyal.trafficengine.TripLine;
+import com.vividsolutions.jts.geom.LineString;
+import com.vividsolutions.jts.io.WKTWriter;
 
 public class App 
 {
     public static void main( String[] args ) throws IOException, ParseException, SchemaException
     {
+    	String PBF_IN = "./data/manila.osm.pbf";//"./data/cebu.osm.pbf";
+    	String CSV_IN = "./data/manila-1m.csv";//"./data/cebu-1m-sorted.csv";
+    	String SHAPEFILE_OUT = "./data/manila_streets.shp";
+    	String CSV_OUT = "./data/manila_speeds.csv";			
+    	String FULL_CSV_OUT = "./data/manila_stats.csv";
+    	
+    	
 		OSM osm = new OSM(null);
-		osm.loadFromPBFFile("./data/cebu.osm.pbf");
+		osm.loadFromPBFFile(PBF_IN);
 		
 		TrafficEngine te = new TrafficEngine();
 		te.setStreets(osm);
 		
+		outputTriplines( te, "data/manila_triplines.csv");
+		//System.exit(0);
+		
 		List<StreetSegment> ss = te.getStreetSegments( osm );
 		
-		OSMUtils.toShapefile( ss, "segs.shp" );
+		OSMUtils.toShapefile( ss, SHAPEFILE_OUT );
 		
-		List<GPSPoint> gpsPoints = loadGPSPointsFromCSV("./data/cebu-1m-sorted.csv");
+//		te.speedSampleListener = new SpeedSampleListener(){
+//			int n=0;
+//			long lastTime = System.currentTimeMillis();
+//			@Override
+//			public void onSpeedSample(SpeedSample ss) {
+//				n += 1;
+//				
+//				if(n%1000==0){
+//					long time = System.currentTimeMillis();
+//					double dt = (time-lastTime)/1000.0;
+//					double rate = 1000/dt;
+//					System.out.println( "rate:"+rate+" records/second");
+//					System.out.println( n );
+//					//System.out.println( ss );
+//					
+//					lastTime=time;
+//				}
+//			}
+//			
+//		};
+		
+		File csvData = new File(CSV_IN);
+		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
+		
+		DateFormat formatter = new TaxiCsvDateFormatter();
 
-		
-		te.speedSampleListener = new SpeedSampleListener(){
-			int n=0;
-			long lastTime = System.currentTimeMillis();
-			@Override
-			public void onSpeedSample(SpeedSample ss) {
-				n += 1;
-				
-				if(n%1000==0){
-					long time = System.currentTimeMillis();
-					double dt = (time-lastTime)/1000.0;
-					double rate = 1000/dt;
-					System.out.println( "rate:"+rate+" records/second");
-					System.out.println( n );
-					//System.out.println( ss );
-					
-					lastTime=time;
-				}
+		int i = 0;
+		for (CSVRecord csvRecord : parser) {
+			if (i % 10000 == 0) {
+				System.out.println(i);
 			}
-			
-		};
-		
-		int j=0;
-		for (GPSPoint gpsPoint : gpsPoints) {
-			j++;
-			if(j%1000==0){
-				System.out.println(String.format("%d/%d gps point read", j, gpsPoints.size()));
-			}
-			te.update(gpsPoint);
+
+			String timeStr = csvRecord.get(0);
+			String vehicleId = csvRecord.get(1);
+			String lonStr = csvRecord.get(2);
+			String latStr = csvRecord.get(3);
+
+			long time = parseTaxiTimeStrToMicros( timeStr );
+
+			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
+			te.update( pt );
+
+			i++;
 		}
+		
+		System.out.println( "DONE" );
+		
+		PrintWriter fullWriter = new PrintWriter (FULL_CSV_OUT);
+		for( Entry<SampleBucketKey, SampleBucket> entry : te.statsSet() ){
+			SampleBucketKey key = entry.getKey();
+			SampleBucket val = entry.getValue();
+			
+			fullWriter.print(String.format("%s:%s:%s,%s,",key.wayId,key.startNodeIndex,key.endNodeIndex,key.hourOfWeek));
+			
+			fullWriter.print(String.format("%s,",val.mean));
+			
+			for(int count : val.buckets){
+				fullWriter.print(","+count);
+			}
+			fullWriter.print("\n");
+		}
+		fullWriter.close();
 		
 		// group buckets by wayid:start:end
 		Map<String,List<Entry<SampleBucketKey, SampleBucket>>> bucketGroups = new HashMap<String,List<Entry<SampleBucketKey, SampleBucket>>>();
@@ -90,7 +135,8 @@ public class App
 			group.add( entry );
 		}
 		
-		PrintWriter printWriter = new PrintWriter ("out.csv");
+		PrintWriter printWriter = new PrintWriter (CSV_OUT);
+		printWriter.println( "waysegid,reverse,count,mean" );
 		for( Entry<String,List<Entry<SampleBucketKey, SampleBucket>>> entry : bucketGroups.entrySet() ){
 			String kk = entry.getKey();
 			List<Entry<SampleBucketKey, SampleBucket>> vv = entry.getValue();
@@ -113,24 +159,45 @@ public class App
 			int count=0;
 			int meansum=0;
 			for(Entry<SampleBucketKey, SampleBucket> bucketEntry : vv ){
+				SampleBucketKey bk = bucketEntry.getKey();
 				SampleBucket bucket = bucketEntry.getValue();
 				
-				count += bucket.count;
-				meansum += count*bucket.mean;
+//				if(bk.hourOfWeek%24 >= 6 && bk.hourOfWeek%24 <= 9) {
+				if(!reverse){
+					count += bucket.count;
+					meansum += bucket.count*bucket.mean;
+//				}
+				}
 			}
 			
-			printWriter.println( String.format("%d.%d.%d,%s,%d,%f", wayId, nd0, nd1, reverse, count, ((float)meansum)/count) );
+			if(count>10){
+				printWriter.println( String.format("%d.%d.%d,%s,%d,%f", wayId, nd0, nd1, reverse, count, ((float)meansum)/count) );
+			}
 		}
 		printWriter.close();
     }
     
+	private static void outputTriplines(TrafficEngine te, String fnout) throws FileNotFoundException {
+		WKTWriter writer = new WKTWriter();
+		PrintWriter printWriter = new PrintWriter (fnout);
+		printWriter.println( "wayid,clusterid,geom" );
+		
+		List<TripLine> triplines = te.getTripLines();
+		for( TripLine tl : triplines ){
+			LineString ls = tl.getGeom();
+			String wkt = writer.write(ls);
+			
+			printWriter.println( String.format("%s,%s,\"%s\"", tl.getWayId(), tl.getClusterIndex(), wkt) );
+		}
+		
+		printWriter.close();
+	}
+
 	private static List<GPSPoint> loadGPSPointsFromCSV(String string) throws IOException, ParseException {
 		List<GPSPoint> ret = new ArrayList<GPSPoint>();
 		
 		File csvData = new File(string);
 		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
-
-		DateFormat formatter = new TaxiCsvDateFormatter();
 
 		int i = 0;
 		for (CSVRecord csvRecord : parser) {
@@ -143,8 +210,7 @@ public class App
 			String lonStr = csvRecord.get(2);
 			String latStr = csvRecord.get(3);
 
-			Date dt = formatter.parse(timeStr);
-			long time = dt.getTime();
+			long time = parseTaxiTimeStrToMicros( timeStr );
 
 			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
 			ret.add(pt);
@@ -153,5 +219,26 @@ public class App
 		}
 
 		return ret;
+	}
+
+	private static long parseTaxiTimeStrToMicros(String timeStr) throws ParseException {
+		StringBuilder sb = new StringBuilder(timeStr);
+		int snipStart = sb.indexOf(".");
+		int snipEnd = sb.indexOf("+");
+		String microsString="0.0";
+		if (snipStart != -1) {
+			microsString = "0"+sb.substring(snipStart,snipEnd);
+			sb.delete(snipStart,snipEnd);
+			timeStr = sb.toString();
+		}
+			
+		SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ssX");
+		
+		Date dt = formatter.parse(timeStr);
+		long timeMillis = dt.getTime();
+		long micros = (long) (Double.parseDouble(microsString)*1000000);
+		
+		long time = timeMillis*1000 + micros;
+		return time;
 	}
 }
