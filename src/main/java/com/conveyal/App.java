@@ -94,13 +94,22 @@ public class App
 
 	private static void printDropoffCsv(TrafficEngine te) throws FileNotFoundException {
 		PrintWriter printWriter = new PrintWriter (DROPOFF_CSV_OUT);
-		printWriter.println("nd0,nd1,n,geom");
+		printWriter.println("nd0,nd1,n,frac,geom");
 		
 		GeometryFactory gf = new GeometryFactory();
 		WKTWriter wktw = new WKTWriter();
 		
 		for(Entry<TripLine, Map<TripLine, Integer>> dropOffEntry : te.getDropOffs().entrySet()){
 			TripLine dropOff = dropOffEntry.getKey();
+			
+			int throughput = te.getNTripEvents( dropOff );
+			
+			if(throughput==0){
+				continue; //TODO if there's a dropoff event we're dealing with here, 
+				          //but there are no recorded trip events for this tripline, that's an error.
+				          //we should be throwing a runtime error
+			}
+			
 			for(Entry<TripLine,Integer> pickUpEntry : dropOffEntry.getValue().entrySet() ){
 				TripLine pickUp = pickUpEntry.getKey();
 				Integer n = pickUpEntry.getValue();
@@ -110,7 +119,9 @@ public class App
 				
 				LineString ls = gf.createLineString(new Coordinate[]{c1,c2});
 				
-				printWriter.println( String.format("%s,%s,%s,\"%s\"", dropOff.getIdString(), pickUp.getIdString(), n, wktw.write(ls)) );
+				double frac = ((double)n)/throughput;
+				
+				printWriter.println( String.format("%s,%s,%s,%s,\"%s\"", dropOff.getIdString(), pickUp.getIdString(), n, frac, wktw.write(ls)) );
 				
 			}
 		}
