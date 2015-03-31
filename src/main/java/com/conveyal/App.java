@@ -39,12 +39,20 @@ import com.vividsolutions.jts.io.WKTWriter;
 
 public class App 
 {
+    private static final int MINIMUM_SPEED_SAMPLE_COUNT = 0;
+    
 	static String PBF_IN = "./data/manila.osm.pbf";//"./data/cebu.osm.pbf";
 	static String CSV_IN = "./data/manila-1m.csv";//"./data/cebu-1m-sorted.csv";
 	static String SHAPEFILE_OUT = "./data/manila_streets.shp";
 	static String CSV_OUT = "./data/manila_speeds.csv";			
 	static String FULL_CSV_OUT = "./data/manila_stats.csv";
 	static String DROPOFF_CSV_OUT = "./data/manila_dropoffs.csv";
+//	static String PBF_IN = "./data/jakarta.osm.pbf";//"./data/cebu.osm.pbf";
+//	static String CSV_IN = "./data/jakarta-2m.csv";//"./data/cebu-1m-sorted.csv";
+//	static String SHAPEFILE_OUT = "./data/jakarta_streets.shp";
+//	static String CSV_OUT = "./data/jakarta_speeds.csv";			
+//	static String FULL_CSV_OUT = "./data/jakarta_stats.csv";
+//	static String DROPOFF_CSV_OUT = "./data/jakarta_dropoffs.csv";
 	
     public static void main( String[] args ) throws IOException, ParseException, SchemaException
     {
@@ -180,7 +188,7 @@ public class App
 				}
 			}
 			
-			if(count>10){
+			if(count>MINIMUM_SPEED_SAMPLE_COUNT){
 				printWriter.println( String.format("%d.%d.%d,%s,%d,%f", wayId, nd0, nd1, reverse, count, ((float)meansum)/count) );
 			}
 		}
