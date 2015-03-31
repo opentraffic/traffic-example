@@ -19,8 +19,10 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.geotools.feature.SchemaException;
+import org.geotools.geometry.GeometryBuilder;
 
 import com.conveyal.osmlib.OSM;
+import com.conveyal.trafficengine.Crossing;
 import com.conveyal.trafficengine.GPSPoint;
 import com.conveyal.trafficengine.OSMUtils;
 import com.conveyal.trafficengine.SampleBucket;
@@ -30,20 +32,23 @@ import com.conveyal.trafficengine.SpeedSampleListener;
 import com.conveyal.trafficengine.StreetSegment;
 import com.conveyal.trafficengine.TrafficEngine;
 import com.conveyal.trafficengine.TripLine;
+import com.vividsolutions.jts.geom.Coordinate;
+import com.vividsolutions.jts.geom.GeometryFactory;
 import com.vividsolutions.jts.geom.LineString;
 import com.vividsolutions.jts.io.WKTWriter;
 
 public class App 
 {
+	static String PBF_IN = "./data/manila.osm.pbf";//"./data/cebu.osm.pbf";
+	static String CSV_IN = "./data/manila-1m.csv";//"./data/cebu-1m-sorted.csv";
+	static String SHAPEFILE_OUT = "./data/manila_streets.shp";
+	static String CSV_OUT = "./data/manila_speeds.csv";			
+	static String FULL_CSV_OUT = "./data/manila_stats.csv";
+	static String DROPOFF_CSV_OUT = "./data/manila_dropoffs.csv";
+	
     public static void main( String[] args ) throws IOException, ParseException, SchemaException
     {
-    	String PBF_IN = "./data/manila.osm.pbf";//"./data/cebu.osm.pbf";
-    	String CSV_IN = "./data/manila-1m.csv";//"./data/cebu-1m-sorted.csv";
-    	String SHAPEFILE_OUT = "./data/manila_streets.shp";
-    	String CSV_OUT = "./data/manila_speeds.csv";			
-    	String FULL_CSV_OUT = "./data/manila_stats.csv";
-    	
-    	
+
 		OSM osm = new OSM(null);
 		osm.loadFromPBFFile(PBF_IN);
 		
@@ -78,48 +83,42 @@ public class App
 //			
 //		};
 		
-		File csvData = new File(CSV_IN);
-		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
+		ingestCsv(te);
 		
-		DateFormat formatter = new TaxiCsvDateFormatter();
+		printFullCsv(te);
+		
+		printSpeedCsv(te);
+		
+		printDropoffCsv(te);
+    }
 
-		int i = 0;
-		for (CSVRecord csvRecord : parser) {
-			if (i % 10000 == 0) {
-				System.out.println(i);
+	private static void printDropoffCsv(TrafficEngine te) throws FileNotFoundException {
+		PrintWriter printWriter = new PrintWriter (DROPOFF_CSV_OUT);
+		printWriter.println("nd0,nd1,n,geom");
+		
+		GeometryFactory gf = new GeometryFactory();
+		WKTWriter wktw = new WKTWriter();
+		
+		for(Entry<TripLine, Map<TripLine, Integer>> dropOffEntry : te.getDropOffs().entrySet()){
+			TripLine dropOff = dropOffEntry.getKey();
+			for(Entry<TripLine,Integer> pickUpEntry : dropOffEntry.getValue().entrySet() ){
+				TripLine pickUp = pickUpEntry.getKey();
+				Integer n = pickUpEntry.getValue();
+				
+				Coordinate c1 = dropOff.getGeom().getCentroid().getCoordinate();
+				Coordinate c2 = pickUp.getGeom().getCentroid().getCoordinate();
+				
+				LineString ls = gf.createLineString(new Coordinate[]{c1,c2});
+				
+				printWriter.println( String.format("%s,%s,%s,\"%s\"", dropOff.getIdString(), pickUp.getIdString(), n, wktw.write(ls)) );
+				
 			}
-
-			String timeStr = csvRecord.get(0);
-			String vehicleId = csvRecord.get(1);
-			String lonStr = csvRecord.get(2);
-			String latStr = csvRecord.get(3);
-
-			long time = parseTaxiTimeStrToMicros( timeStr );
-
-			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
-			te.update( pt );
-
-			i++;
 		}
 		
-		System.out.println( "DONE" );
-		
-		PrintWriter fullWriter = new PrintWriter (FULL_CSV_OUT);
-		for( Entry<SampleBucketKey, SampleBucket> entry : te.statsSet() ){
-			SampleBucketKey key = entry.getKey();
-			SampleBucket val = entry.getValue();
-			
-			fullWriter.print(String.format("%s:%s:%s,%s,",key.wayId,key.startNodeIndex,key.endNodeIndex,key.hourOfWeek));
-			
-			fullWriter.print(String.format("%s,",val.mean));
-			
-			for(int count : val.buckets){
-				fullWriter.print(","+count);
-			}
-			fullWriter.print("\n");
-		}
-		fullWriter.close();
-		
+		printWriter.close();
+	}
+
+	private static void printSpeedCsv(TrafficEngine te) throws FileNotFoundException {
 		// group buckets by wayid:start:end
 		Map<String,List<Entry<SampleBucketKey, SampleBucket>>> bucketGroups = new HashMap<String,List<Entry<SampleBucketKey, SampleBucket>>>();
 		for( Entry<SampleBucketKey, SampleBucket> entry : te.statsSet() ){
@@ -175,7 +174,53 @@ public class App
 			}
 		}
 		printWriter.close();
-    }
+	}
+
+	private static void printFullCsv(TrafficEngine te) throws FileNotFoundException {
+		PrintWriter fullWriter = new PrintWriter (FULL_CSV_OUT);
+		for( Entry<SampleBucketKey, SampleBucket> entry : te.statsSet() ){
+			SampleBucketKey key = entry.getKey();
+			SampleBucket val = entry.getValue();
+			
+			fullWriter.print(String.format("%s:%s:%s,%s,",key.wayId,key.startNodeIndex,key.endNodeIndex,key.hourOfWeek));
+			
+			fullWriter.print(String.format("%s,",val.mean));
+			
+			for(int count : val.buckets){
+				fullWriter.print(","+count);
+			}
+			fullWriter.print("\n");
+		}
+		fullWriter.close();
+	}
+
+	private static void ingestCsv(TrafficEngine te) throws IOException, ParseException {
+		File csvData = new File(CSV_IN);
+		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
+		
+		DateFormat formatter = new TaxiCsvDateFormatter();
+
+		int i = 0;
+		for (CSVRecord csvRecord : parser) {
+			if (i % 10000 == 0) {
+				System.out.println(i);
+			}
+
+			String timeStr = csvRecord.get(0);
+			String vehicleId = csvRecord.get(1);
+			String lonStr = csvRecord.get(2);
+			String latStr = csvRecord.get(3);
+
+			long time = parseTaxiTimeStrToMicros( timeStr );
+
+			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
+			te.update( pt );
+
+			i++;
+		}
+		
+		System.out.println( "DONE" );
+	}
     
 	private static void outputTriplines(TrafficEngine te, String fnout) throws FileNotFoundException {
 		WKTWriter writer = new WKTWriter();
