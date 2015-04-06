@@ -52,6 +52,7 @@ public class App
 	static String CSV_OUT = "./data/manila_speeds.csv";			
 	static String FULL_CSV_OUT = "./data/manila_stats.csv";
 	static String DROPOFF_CSV_OUT = "./data/manila_dropoffs.csv";
+	static String TRIPLINE_CSV_OUT = "./data/manila_triplines.csv";
 //	static String PBF_IN = "./data/jakarta.osm.pbf";//"./data/cebu.osm.pbf";
 //	static String CSV_IN = "./data/jakarta-2m.csv";//"./data/cebu-1m-sorted.csv";
 //	static String SHAPEFILE_OUT = "./data/jakarta_streets.shp";
@@ -68,39 +69,13 @@ public class App
 		TrafficEngine te = new TrafficEngine();
 		te.setStreets(osm);
 		
-		outputTriplines( te, "data/manila_triplines.csv");
+		outputTriplines( te, TRIPLINE_CSV_OUT);
 		//System.exit(0);
 		
 		List<StreetSegment> ss = te.getStreetSegments( osm );
 		
 		OSMUtils.toShapefile( ss, SHAPEFILE_OUT );
-		
-		DB db = DBMaker.newFileDB(new File("samples.db")).make();
-		Set<FlatSpeedSample> samples = db.getHashSet("test");
-		
-		class DbPutter implements SpeedSampleListener{
-			
-			private Set<FlatSpeedSample> samples;
-			int n=0;
-
-			DbPutter(Set<FlatSpeedSample> samples){
-				this.samples = samples;
-			}
-
-			@Override
-			public void onSpeedSample(SpeedSample ss) {
-				//samples.add( FlatSpeedSample.fromSpeedSample( ss ) );
 				
-				n+=1;
-				if(n%10000==0){
-					//System.out.println( n );
-				}
-			}
-			
-		}
-		
-		te.speedSampleListener = new DbPutter(samples);
-		
 //		te.speedSampleListener = new SpeedSampleListener(){
 //			int n=0;
 //			long lastTime = System.currentTimeMillis();
@@ -122,7 +97,9 @@ public class App
 //			
 //		};
 		
-		ingestCsv(te);
+		Histogram hist = new Histogram();
+		
+		ingestCsv(hist, te);
 		
 		printFullCsv(te);
 		
@@ -244,17 +221,14 @@ public class App
 //		fullWriter.close();
 	}
 
-	private static void ingestCsv(TrafficEngine te) throws IOException, ParseException {
+	private static void ingestCsv(Histogram hist, TrafficEngine te) throws IOException, ParseException {
 		File csvData = new File(CSV_IN);
 		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
 		
-		DateFormat formatter = new TaxiCsvDateFormatter();
-
-		int i = 0;
+		long deadline = 0;
+		long WINDOW_SIZE = 5*60*1000000; // five minutes, in microseconds
+		List<SpeedSample> staging = new ArrayList<SpeedSample>();
 		for (CSVRecord csvRecord : parser) {
-			if (i % 10000 == 0) {
-				System.out.println(i);
-			}
 
 			String timeStr = csvRecord.get(0);
 			String vehicleId = csvRecord.get(1);
@@ -262,11 +236,26 @@ public class App
 			String latStr = csvRecord.get(3);
 
 			long time = parseTaxiTimeStrToMicros( timeStr );
+			
+			if( time > deadline ){
+				SimpleDateFormat sdf = new SimpleDateFormat();
+				System.out.println( staging.size()+" records rolled at "+sdf.format(new Date(deadline/1000)) );
+				
+				// roll logs
+				hist.ingest( staging );
+				staging.clear();
+				
+				// set new deadline
+				deadline = ((time/WINDOW_SIZE)+1)*WINDOW_SIZE;
+			}
 
 			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
-			te.update( pt );
+			List<SpeedSample> speeds = te.update( pt );
+			
+			if(speeds != null ){
+				staging.addAll( speeds );
+			}
 
-			i++;
 		}
 		
 		System.out.println( "DONE" );
@@ -294,11 +283,7 @@ public class App
 		File csvData = new File(string);
 		CSVParser parser = CSVParser.parse(csvData, Charset.forName("UTF-8"), CSVFormat.RFC4180);
 
-		int i = 0;
 		for (CSVRecord csvRecord : parser) {
-			if (i % 10000 == 0) {
-				System.out.println(i);
-			}
 
 			String timeStr = csvRecord.get(0);
 			String vehicleId = csvRecord.get(1);
@@ -310,7 +295,6 @@ public class App
 			GPSPoint pt = new GPSPoint(time, vehicleId, Double.parseDouble(lonStr), Double.parseDouble(latStr));
 			ret.add(pt);
 
-			i++;
 		}
 
 		return ret;
