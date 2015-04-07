@@ -3,10 +3,12 @@ package com.conveyal;
 import java.io.File;
 import java.util.Calendar;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentNavigableMap;
 
 import org.mapdb.DB;
 import org.mapdb.DBMaker;
+import org.mapdb.Fun;
 import org.mapdb.Fun.Tuple3;
 
 import com.conveyal.trafficengine.SpeedSample;
@@ -26,6 +28,34 @@ public class Histogram {
 		           .make();
 		
 		 map = db.getTreeMap("collectionName");
+	}
+	
+	public ConcurrentNavigableMap<Tuple3<String, Integer, Integer>, Integer> getHistogramForWay(String waySegId){
+		return map.subMap(new Tuple3<String,Integer,Integer>(waySegId, null, null), new Tuple3<String,Integer,Integer>(waySegId, Integer.MAX_VALUE, Integer.MAX_VALUE));
+	}
+	
+	public double meanSpeed(String waySegId){
+		int count=0;
+		double sumSpeed=0;
+		
+		for(Entry<Tuple3<String, Integer, Integer>, Integer> entry : this.getHistogramForWay(waySegId).entrySet() ){
+			int speedBucket = entry.getKey().c;
+			double speed = (speedBucket+0.5)*BUCKET_SIZE;
+			count += entry.getValue();
+			sumSpeed += speed;
+		}
+		
+		return sumSpeed/count;
+	}
+	
+	public double count(String waySegId){
+		int count=0;
+		
+		for(Entry<Tuple3<String, Integer, Integer>, Integer> entry : this.getHistogramForWay(waySegId).entrySet() ){
+			count += entry.getValue();
+		}
+		
+		return count;
 	}
 
 	public void ingest(List<SpeedSample> staging) {
@@ -52,7 +82,7 @@ public class Histogram {
 		TripLine tl0 = ss.getFirstCrossing().getTripline();
 		TripLine tl1 = ss.getLastCrossing().getTripline();
 		
-		return tl0.getWayId()+":"+tl0.getNdIndex()+":"+tl1.getNdIndex();
+		return tl0.getWayId()+"."+tl0.getNdIndex()+"."+tl1.getNdIndex();
 	}
 
 	private int getHourOfWeek(long timeMicros) {
