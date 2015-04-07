@@ -22,8 +22,8 @@ public class Histogram {
 	//(way_semgent_id,hour_of_week,speed_histogram_bucket)
 	ConcurrentNavigableMap<Tuple3<String,Integer,Integer>,Integer> map;
 	
-	Histogram(){
-		db = DBMaker.newFileDB(new File("testdb"))
+	Histogram(String filename){
+		db = DBMaker.newFileDB(new File(filename))
 		           .closeOnJvmShutdown()
 		           .make();
 		
